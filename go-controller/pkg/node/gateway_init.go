@@ -286,6 +286,7 @@ func newDisabledModeGateway(nc *DefaultNodeNetworkController, nodeAnnotator kube
 		initFunc:     func() error { return nil },
 		readyFunc:    func() (bool, error) { return true, nil },
 		watchFactory: nc.watchFactory.(*factory.WatchFactory),
+		gwIface:      gatewayIntf,
 	}, nil
 }
 
@@ -412,6 +413,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost() error {
 		stopChan:     nc.stopChan,
 		wg:           nc.wg,
 		watchFactory: nc.watchFactory.(*factory.WatchFactory),
+		gwIface:      gwIntf,
 	}
 
 	// TODO(adrianc): revisit if support for nodeIPManager is needed.
