@@ -391,7 +391,7 @@ func createNodeManagementPorts(name string, nodeAnnotator kube.Annotator, waiter
 					config.OvnKubeNode.MgmtPortNetdev, types.K8sMgmtIntfName, err)
 			}
 		}
-		rep, err := util.GetFunctionRepresentorName(deviceID)
+		rep, _, err := util.GetFunctionRepresentorName(deviceID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -436,15 +436,6 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	if node, err = nc.Kube.GetNode(nc.name); err != nil {
 		return fmt.Errorf("error retrieving node %s: %v", nc.name, err)
-	}
-
-	nodeAddrStr, err := util.GetNodePrimaryIP(node)
-	if err != nil {
-		return err
-	}
-	nodeAddr := net.ParseIP(nodeAddrStr)
-	if nodeAddr == nil {
-		return fmt.Errorf("failed to parse kubernetes node IP address. %v", err)
 	}
 
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
@@ -502,13 +493,13 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	// Initialize gateway
 	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
-		err = nc.initGatewayDPUHost(nodeAddr)
+		err = nc.initGatewayDPUHost()
 		if err != nil {
 			return err
 		}
 	} else {
 		// Initialize gateway for OVS internal port or representor management port
-		if err := nc.initGateway(subnets, nodeAnnotator, waiter, mgmtPortConfig, nodeAddr); err != nil {
+		if err := nc.initGateway(subnets, nodeAnnotator, waiter, mgmtPortConfig); err != nil {
 			return err
 		}
 	}
@@ -538,16 +529,16 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 		klog.Infof("Current control-plane topology version is %d", initialTopoVersion)
 
-		bridgeName := ""
+		gatewayIface := ""
 		if config.OvnKubeNode.Mode == types.NodeModeFull {
-			bridgeName = nc.gateway.GetGatewayBridgeIface()
+			gatewayIface = nc.gateway.GetGatewayIface()
 
 			needLegacySvcRoute := true
 			if (initialTopoVersion >= types.OvnHostToSvcOFTopoVersion && config.GatewayModeShared == config.Gateway.Mode) ||
 				(initialTopoVersion >= types.OvnRoutingViaHostTopoVersion) {
 				// Configure route for svc towards shared gw bridge
 				// Have to have the route to bridge for multi-NIC mode, where the default gateway may go to a non-OVS interface
-				if err := configureSvcRouteViaBridge(bridgeName); err != nil {
+				if err := configureSvcRouteViaBridge(gatewayIface); err != nil {
 					return err
 				}
 				needLegacySvcRoute = false
@@ -588,7 +579,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 				// migrate service route from ovn-k8s-mp0 to shared gw bridge
 				if (initialTopoVersion < types.OvnHostToSvcOFTopoVersion && config.GatewayModeShared == config.Gateway.Mode) ||
 					(initialTopoVersion < types.OvnRoutingViaHostTopoVersion) {
-					if err := upgradeServiceRoute(bridgeName); err != nil {
+					if err := upgradeServiceRoute(gatewayIface); err != nil {
 						klog.Fatalf("Failed to upgrade service route for node, error: %v", err)
 					}
 				}
@@ -944,7 +935,7 @@ func configureSvcRouteViaBridge(bridge string) error {
 	return configureSvcRouteViaInterface(bridge, DummyNextHopIPs())
 }
 
-func upgradeServiceRoute(bridgeName string) error {
+func upgradeServiceRoute(gatewayIface string) error {
 	klog.Info("Updating K8S Service route")
 	// Flush old routes
 	link, err := util.LinkSetUp(types.K8sMgmtIntfName)
@@ -955,7 +946,7 @@ func upgradeServiceRoute(bridgeName string) error {
 		return fmt.Errorf("unable to delete routes on upgrade, error: %v", err)
 	}
 	// add route via OVS bridge
-	if err := configureSvcRouteViaBridge(bridgeName); err != nil {
+	if err := configureSvcRouteViaBridge(gatewayIface); err != nil {
 		return fmt.Errorf("unable to add svc route via OVS bridge interface, error: %v", err)
 	}
 	klog.Info("Successfully updated Kubernetes service route towards OVS")
